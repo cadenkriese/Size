@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -61,6 +62,18 @@ struct DiskUsageScannerTests {
         }
     }
 
+    @Test func matchesDuForInvalidUTF8Filename() throws {
+        try withTemporaryDirectory { root in
+            try createAllocatedFileWithInvalidUTF8Name(in: root)
+
+            let result = try invoke([root.path])
+            let expectedSize = try duSize(for: root)
+            #expect(result.status == 0)
+            #expect(firstField(of: result.standardOutput) == expectedSize)
+            #expect(result.standardError.isEmpty)
+        }
+    }
+
     @Test func summarizesAndReportsUnreadableDescendants() throws {
         try withTemporaryDirectory { root in
             let restricted = root.appendingPathComponent("restricted", isDirectory: true)
@@ -89,6 +102,29 @@ struct DiskUsageScannerTests {
         let status: Int32
         let standardOutput: String
         let standardError: String
+    }
+
+    private func createAllocatedFileWithInvalidUTF8Name(in directory: URL) throws {
+        var path = directory.path.utf8.map(CChar.init(bitPattern:))
+        path.append(47)
+        path.append(CChar(bitPattern: 0xFF))
+        path.append(contentsOf: [88, 88, 88, 88, 88, 88, 0])
+
+        let fileDescriptor = path.withUnsafeMutableBufferPointer {
+            mkstemp($0.baseAddress)
+        }
+        let creationError = errno
+        if fileDescriptor < 0, creationError == EILSEQ {
+            try Test.cancel("The temporary filesystem rejects invalid UTF-8 names")
+        }
+        try #require(fileDescriptor >= 0, "mkstemp failed with errno \(creationError)")
+        defer { close(fileDescriptor) }
+
+        let contents = [UInt8](repeating: 0xA5, count: 16 * 1_024)
+        let written = contents.withUnsafeBytes {
+            Darwin.write(fileDescriptor, $0.baseAddress, $0.count)
+        }
+        #expect(written == contents.count)
     }
 
     private func invoke(_ arguments: [String]) throws -> Invocation {
