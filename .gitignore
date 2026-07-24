@@ -1,0 +1,16 @@
+# Swift Package
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+
+# Agents
+.claude/
+.codex/
+.gemini/
+
+# macOS
+.DS_Store
