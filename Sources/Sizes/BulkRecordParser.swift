@@ -174,10 +174,10 @@ private struct RecordReader {
             throw BulkRecordParser.ParseError(description: "name attribute contains an embedded null byte")
         }
 
-        var platformName = buffer[nameStart..<nameEnd].map(CChar.init(bitPattern:))
-        let component = platformName.withUnsafeMutableBufferPointer { pointer -> FilePath.Component? in
-            guard let baseAddress = pointer.baseAddress else { return nil }
-            return FilePath.Component(platformString: baseAddress)
+        let platformName = UnsafeRawBufferPointer(rebasing: buffer[nameStart..<nameEnd])
+            .bindMemory(to: CChar.self)
+        let component = platformName.baseAddress.flatMap {
+            FilePath.Component(platformString: $0)
         }
         guard let component else {
             throw BulkRecordParser.ParseError(description: "invalid file name component")
