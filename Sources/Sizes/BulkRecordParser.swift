@@ -39,7 +39,7 @@ struct BulkRecordParser {
         let description: String
     }
 
-    static func parse(buffer: UnsafeRawBufferPointer, recordCount: Int) throws -> [Entry] {
+    static func parse(buffer: borrowing Span<UInt8>, recordCount: Int) throws -> [Entry] {
         guard recordCount >= 0 else {
             throw ParseError(description: "negative bulk record count")
         }
@@ -49,32 +49,41 @@ struct BulkRecordParser {
         var offset = 0
         for _ in 0..<recordCount {
             var reader = try RecordReader(buffer: buffer, start: offset)
-            entries.append(try parseRecord(from: &reader))
+            entries.append(try parseRecord(from: &reader, buffer: buffer))
             offset = reader.end
         }
         return entries
     }
 
-    private static func parseRecord(from reader: inout RecordReader) throws -> Entry {
-        let returned: attribute_set_t = try reader.read()
+    private static func parseRecord(
+        from reader: inout RecordReader,
+        buffer: borrowing Span<UInt8>
+    ) throws -> Entry {
+        let returned = try reader.readReturnedAttributes(from: buffer)
         try validate(returned)
 
         let component = try reader.readComponent(
+            from: buffer,
             ifPresent: returned.commonattr & UInt32(ATTR_CMN_NAME) != 0
         )
         let rawDevice: UInt32? = try reader.read(
+            from: buffer,
             ifPresent: returned.commonattr & UInt32(ATTR_CMN_DEVID) != 0
         )
         let objectType: UInt32? = try reader.read(
+            from: buffer,
             ifPresent: returned.commonattr & UInt32(ATTR_CMN_OBJTYPE) != 0
         )
         let fileID: UInt64? = try reader.read(
+            from: buffer,
             ifPresent: returned.commonattr & UInt32(ATTR_CMN_FILEID) != 0
         )
         let errorCode: Int32? = try reader.read(
+            from: buffer,
             ifPresent: returned.commonattr & errorAttribute != 0
         )
         let allocationSize: Int64? = try reader.read(
+            from: buffer,
             ifPresent: returned.fileattr & UInt32(ATTR_FILE_ALLOCSIZE) != 0
         )
 
@@ -88,7 +97,7 @@ struct BulkRecordParser {
         )
     }
 
-    private static func validate(_ returned: attribute_set_t) throws {
+    private static func validate(_ returned: ReturnedAttributes) throws {
         guard returned.commonattr & UInt32(ATTR_CMN_RETURNED_ATTRS) != 0 else {
             throw ParseError(description: "bulk record omitted its returned-attribute mask")
         }
@@ -102,62 +111,99 @@ struct BulkRecordParser {
     }
 }
 
+private struct ReturnedAttributes {
+    let commonattr: UInt32
+    let volattr: UInt32
+    let dirattr: UInt32
+    let fileattr: UInt32
+    let forkattr: UInt32
+}
+
+private struct AttributeReference {
+    let dataOffset: Int32
+    let length: UInt32
+}
+
 private struct RecordReader {
-    let buffer: UnsafeRawBufferPointer
     let start: Int
     let end: Int
     private(set) var offset: Int
 
-    init(buffer: UnsafeRawBufferPointer, start: Int) throws {
+    init(buffer: borrowing Span<UInt8>, start: Int) throws {
         let headerSize = MemoryLayout<UInt32>.size
         guard start >= 0, start <= buffer.count, headerSize <= buffer.count - start else {
             throw BulkRecordParser.ParseError(description: "truncated bulk attribute record")
         }
 
-        let length = buffer.loadUnaligned(fromByteOffset: start, as: UInt32.self)
+        let length = buffer.bytes.load(fromByteOffset: start, as: UInt32.self)
         guard let recordLength = Int(exactly: length),
               recordLength >= headerSize,
               recordLength <= buffer.count - start else {
             throw BulkRecordParser.ParseError(description: "invalid bulk record length")
         }
 
-        self.buffer = buffer
         self.start = start
         end = start + recordLength
         offset = start + headerSize
     }
 
-    mutating func read<T>() throws -> T {
+    mutating func read<T: ConvertibleFromBytes>(
+        from buffer: borrowing Span<UInt8>
+    ) throws -> T {
         let size = MemoryLayout<T>.size
         guard offset <= end, size <= end - offset else {
             throw BulkRecordParser.ParseError(description: "truncated bulk attribute record")
         }
         defer { offset += size }
-        return buffer.loadUnaligned(fromByteOffset: offset, as: T.self)
+        return buffer.bytes.load(fromByteOffset: offset, as: T.self)
     }
 
-    mutating func read<T>(ifPresent: Bool) throws -> T? {
+    mutating func read<T: ConvertibleFromBytes>(
+        from buffer: borrowing Span<UInt8>,
+        ifPresent: Bool
+    ) throws -> T? {
         guard ifPresent else { return nil }
-        let value: T = try read()
+        let value: T = try read(from: buffer)
         return value
     }
 
+    mutating func readReturnedAttributes(
+        from buffer: borrowing Span<UInt8>
+    ) throws -> ReturnedAttributes {
+        let commonattr: UInt32 = try read(from: buffer)
+        let volattr: UInt32 = try read(from: buffer)
+        let dirattr: UInt32 = try read(from: buffer)
+        let fileattr: UInt32 = try read(from: buffer)
+        let forkattr: UInt32 = try read(from: buffer)
+        return ReturnedAttributes(
+            commonattr: commonattr,
+            volattr: volattr,
+            dirattr: dirattr,
+            fileattr: fileattr,
+            forkattr: forkattr
+        )
+    }
+
     mutating func readComponent(
+        from buffer: borrowing Span<UInt8>,
         ifPresent: Bool
     ) throws -> FilePath.Component? {
         guard ifPresent else { return nil }
         let referenceOffset = offset
-        let reference: attrreference_t = try read()
-        return try component(from: reference, relativeTo: referenceOffset)
+        let dataOffset: Int32 = try read(from: buffer)
+        let dataLength: UInt32 = try read(from: buffer)
+        let reference = AttributeReference(dataOffset: dataOffset, length: dataLength)
+        return try component(from: reference, relativeTo: referenceOffset, buffer: buffer)
     }
 
     private func component(
-        from reference: attrreference_t,
-        relativeTo referenceOffset: Int
+        from reference: AttributeReference,
+        relativeTo referenceOffset: Int,
+        buffer: borrowing Span<UInt8>
     ) throws -> FilePath.Component {
-        guard reference.attr_dataoffset >= 0,
-              let dataOffset = Int(exactly: reference.attr_dataoffset),
-              let dataLength = Int(exactly: reference.attr_length) else {
+        guard reference.dataOffset >= 0,
+              let dataOffset = Int(exactly: reference.dataOffset),
+              let dataLength = Int(exactly: reference.length) else {
             throw BulkRecordParser.ParseError(description: "invalid name attribute reference")
         }
 
@@ -170,14 +216,18 @@ private struct RecordReader {
               buffer[nameEnd - 1] == 0 else {
             throw BulkRecordParser.ParseError(description: "out-of-bounds name attribute reference")
         }
-        guard !buffer[nameStart..<(nameEnd - 1)].contains(0) else {
+
+        for index in nameStart..<(nameEnd - 1) where buffer[index] == 0 {
             throw BulkRecordParser.ParseError(description: "name attribute contains an embedded null byte")
         }
 
-        let platformName = UnsafeRawBufferPointer(rebasing: buffer[nameStart..<nameEnd])
-            .bindMemory(to: CChar.self)
-        let component = platformName.baseAddress.flatMap {
-            FilePath.Component(platformString: $0)
+        let platformName = buffer.extracting(nameStart..<nameEnd)
+        let component = platformName.withUnsafeBufferPointer { bytes in
+            bytes.withMemoryRebound(to: CChar.self) { characters in
+                characters.baseAddress.flatMap {
+                    FilePath.Component(platformString: $0)
+                }
+            }
         }
         guard let component else {
             throw BulkRecordParser.ParseError(description: "invalid file name component")

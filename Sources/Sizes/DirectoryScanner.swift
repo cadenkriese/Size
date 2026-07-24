@@ -137,9 +137,10 @@ private extension ScanContext {
             }
 
             do {
-                let entries = try buffer.withUnsafeBytes {
-                    try BulkRecordParser.parse(buffer: $0, recordCount: Int(count))
-                }
+                let entries = try BulkRecordParser.parse(
+                    buffer: buffer.span,
+                    recordCount: Int(count)
+                )
                 for entry in entries {
                     guard process(
                         entry: entry,
@@ -171,13 +172,15 @@ private extension ScanContext {
         }
         guard component.kind == .regular else { return true }
 
-        var childPath = parentPath
-        childPath.append(component)
         if let code = entry.errorCode, code != 0 {
+            var childPath = parentPath
+            childPath.append(component)
             recordFailure(path: childPath, code: code, isRoot: false)
             return true
         }
         if entry.objectType == BulkRecordParser.directoryType {
+            var childPath = parentPath
+            childPath.append(component)
             scheduleDirectory(path: childPath)
             return true
         }
@@ -191,7 +194,7 @@ private extension ScanContext {
         accountUsingStat(
             descriptor: descriptor,
             component: component,
-            path: childPath,
+            parentPath: parentPath,
             accounting: &accounting
         )
         return !accumulator.hasFatalError
@@ -217,7 +220,7 @@ private extension ScanContext {
     func accountUsingStat(
         descriptor: Int32,
         component: FilePath.Component,
-        path: FilePath,
+        parentPath: FilePath,
         accounting: inout DirectoryAccounting
     ) {
         var metadata = stat()
@@ -225,7 +228,10 @@ private extension ScanContext {
             fstatat(descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
         }
         guard status == 0 else {
-            recordFailure(path: path, code: errno, isRoot: false)
+            let code = errno
+            var childPath = parentPath
+            childPath.append(component)
+            recordFailure(path: childPath, code: code, isRoot: false)
             return
         }
         guard metadata.st_blocks >= 0 else {
