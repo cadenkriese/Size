@@ -7,11 +7,14 @@ final class ScanContext: @unchecked Sendable {
     private let group = DispatchGroup()
     private let accumulator: ScanAccumulator
     private let identities = ShardedIdentitySet()
+    private let cloneIdentities: ShardedCloneIdentitySet?
     private let buffers: ReusableBufferPool
+    private let ignoreClones: Bool
 
     init(
         workerCount: Int,
         verbose: Bool,
+        ignoreClones: Bool,
         diagnosticHandler: @escaping @Sendable (String) -> Void
     ) {
         queue = OperationQueue()
@@ -19,7 +22,9 @@ final class ScanContext: @unchecked Sendable {
         queue.maxConcurrentOperationCount = workerCount
         queue.qualityOfService = .userInitiated
         accumulator = ScanAccumulator(verbose: verbose, diagnosticHandler: diagnosticHandler)
+        cloneIdentities = ignoreClones ? ShardedCloneIdentitySet() : nil
         buffers = ReusableBufferPool(count: workerCount, size: DiskUsageScanner.bufferSize)
+        self.ignoreClones = ignoreClones
     }
 }
 
@@ -68,7 +73,10 @@ extension ScanContext {
             return
         }
 
-        var accounting = DirectoryAccounting(directBlocks: blocks)
+        var accounting = DirectoryAccounting(
+            directBlocks: blocks,
+            collectCloneMetadata: ignoreClones
+        )
         buffers.withBuffer { buffer in
             readDirectory(
                 descriptor: descriptor,
@@ -119,7 +127,8 @@ private extension ScanContext {
         buffer: inout [UInt8],
         accounting: inout DirectoryAccounting
     ) {
-        var attributeList = BulkRecordParser.attributeList
+        var attributeList = BulkRecordParser.attributeList(includeCloneMetadata: ignoreClones)
+        let options = ignoreClones ? UInt64(FSOPT_ATTR_CMN_EXTENDED) : 0
         while !accumulator.hasFatalError {
             let count = buffer.withUnsafeMutableBytes { rawBuffer in
                 getattrlistbulk(
@@ -127,7 +136,7 @@ private extension ScanContext {
                     &attributeList,
                     rawBuffer.baseAddress,
                     rawBuffer.count,
-                    0
+                    options
                 )
             }
             if count == 0 { return }
@@ -139,7 +148,8 @@ private extension ScanContext {
             do {
                 let entries = try BulkRecordParser.parse(
                     buffer: buffer.span,
-                    recordCount: Int(count)
+                    recordCount: Int(count),
+                    includeCloneMetadata: ignoreClones
                 )
                 for entry in entries {
                     guard process(
@@ -186,7 +196,10 @@ private extension ScanContext {
         }
         if entry.objectType == BulkRecordParser.regularType,
            let allocation = bulkAllocation(for: entry) {
-            accounting.regularFiles.append(allocation)
+            accounting.append(
+                allocation,
+                cloneIdentity: exactCloneIdentity(for: entry, device: allocation.identity.device)
+            )
             return true
         }
         guard !accumulator.hasFatalError else { return false }
@@ -217,6 +230,18 @@ private extension ScanContext {
         }
     }
 
+    func exactCloneIdentity(
+        for entry: BulkRecordParser.Entry,
+        device: UInt64
+    ) -> CloneIdentity? {
+        guard ignoreClones,
+              let cloneID = entry.cloneID,
+              cloneID != 0,
+              let extendedFlags = entry.extendedFlags,
+              extendedFlags & UInt64(EF_SHARES_ALL_BLOCKS) != 0 else { return nil }
+        return CloneIdentity(device: device, cloneID: cloneID)
+    }
+
     func accountUsingStat(
         descriptor: Int32,
         component: FilePath.Component,
@@ -241,14 +266,15 @@ private extension ScanContext {
 
         let blocks = UInt64(metadata.st_blocks)
         if fileType(metadata.st_mode) == S_IFREG {
-            accounting.regularFiles.append(
+            accounting.append(
                 FileAllocation(
                     identity: FileIdentity(
                         device: UInt64(UInt32(bitPattern: metadata.st_dev)),
                         inode: UInt64(metadata.st_ino)
                     ),
                     blocks: blocks
-                )
+                ),
+                cloneIdentity: nil
             )
         } else {
             do {
@@ -262,7 +288,15 @@ private extension ScanContext {
     func commit(_ accounting: DirectoryAccounting) {
         guard !accumulator.hasFatalError else { return }
         do {
-            let fileBlocks = try identities.insertAndSum(accounting.regularFiles)
+            let fileBlocks: UInt64
+            if let cloneFiles = accounting.cloneFiles,
+               let cloneIdentities {
+                fileBlocks = try cloneIdentities.insertAndSum(
+                    identities.insertUnique(cloneFiles)
+                )
+            } else {
+                fileBlocks = try identities.insertAndSum(accounting.regularFiles)
+            }
             accumulator.add(
                 blocks: try DiskUsageScanner.checkedAdd(accounting.directBlocks, fileBlocks)
             )

@@ -11,6 +11,11 @@ struct FileIdentity: Hashable, Sendable {
     let inode: UInt64
 }
 
+struct CloneIdentity: Hashable, Sendable {
+    let device: UInt64
+    let cloneID: UInt64
+}
+
 enum ScanError: Error, CustomStringConvertible, Sendable {
     case root(path: FilePath, code: Int32)
     case malformedDirectory(path: FilePath, reason: String)
@@ -33,6 +38,7 @@ struct DiskUsageScanner: Sendable {
     static let bufferSize = 128 * 1024
 
     var verbose = false
+    var ignoreClones = false
     var diagnosticHandler: @Sendable (String) -> Void = { message in
         FileHandle.standardError.write(Data(message.utf8))
     }
@@ -42,6 +48,7 @@ struct DiskUsageScanner: Sendable {
         return try ScanContext(
             workerCount: max(1, workers),
             verbose: verbose,
+            ignoreClones: ignoreClones,
             diagnosticHandler: diagnosticHandler
         ).scan(root)
     }

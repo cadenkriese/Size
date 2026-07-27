@@ -13,8 +13,10 @@ struct BulkRecordParser {
         | UInt32(ATTR_CMN_FILEID)
         | errorAttribute
     private static let fileAttributes = UInt32(ATTR_FILE_ALLOCSIZE)
+    private static let cloneAttributes = UInt32(ATTR_CMNEXT_CLONEID)
+        | UInt32(ATTR_CMNEXT_EXT_FLAGS)
 
-    static var attributeList: attrlist {
+    static func attributeList(includeCloneMetadata: Bool) -> attrlist {
         attrlist(
             bitmapcount: UInt16(ATTR_BIT_MAP_COUNT),
             reserved: 0,
@@ -22,7 +24,7 @@ struct BulkRecordParser {
             volattr: 0,
             dirattr: 0,
             fileattr: fileAttributes,
-            forkattr: 0
+            forkattr: includeCloneMetadata ? cloneAttributes : 0
         )
     }
 
@@ -33,13 +35,19 @@ struct BulkRecordParser {
         let fileID: UInt64?
         let errorCode: Int32?
         let allocationSize: Int64?
+        let cloneID: UInt64?
+        let extendedFlags: UInt64?
     }
 
     struct ParseError: Error, CustomStringConvertible, Equatable, Sendable {
         let description: String
     }
 
-    static func parse(buffer: borrowing Span<UInt8>, recordCount: Int) throws -> [Entry] {
+    static func parse(
+        buffer: borrowing Span<UInt8>,
+        recordCount: Int,
+        includeCloneMetadata: Bool = false
+    ) throws -> [Entry] {
         guard recordCount >= 0 else {
             throw ParseError(description: "negative bulk record count")
         }
@@ -49,7 +57,13 @@ struct BulkRecordParser {
         var offset = 0
         for _ in 0..<recordCount {
             var reader = try RecordReader(buffer: buffer, start: offset)
-            entries.append(try parseRecord(from: &reader, buffer: buffer))
+            entries.append(
+                try parseRecord(
+                    from: &reader,
+                    buffer: buffer,
+                    includeCloneMetadata: includeCloneMetadata
+                )
+            )
             offset = reader.end
         }
         return entries
@@ -57,10 +71,11 @@ struct BulkRecordParser {
 
     private static func parseRecord(
         from reader: inout RecordReader,
-        buffer: borrowing Span<UInt8>
+        buffer: borrowing Span<UInt8>,
+        includeCloneMetadata: Bool
     ) throws -> Entry {
         let returned = try reader.readReturnedAttributes(from: buffer)
-        try validate(returned)
+        try validate(returned, includeCloneMetadata: includeCloneMetadata)
 
         let component = try reader.readComponent(
             from: buffer,
@@ -86,6 +101,14 @@ struct BulkRecordParser {
             from: buffer,
             ifPresent: returned.fileattr & UInt32(ATTR_FILE_ALLOCSIZE) != 0
         )
+        let cloneID: UInt64? = try reader.read(
+            from: buffer,
+            ifPresent: returned.forkattr & UInt32(ATTR_CMNEXT_CLONEID) != 0
+        )
+        let extendedFlags: UInt64? = try reader.read(
+            from: buffer,
+            ifPresent: returned.forkattr & UInt32(ATTR_CMNEXT_EXT_FLAGS) != 0
+        )
 
         return Entry(
             component: component,
@@ -93,19 +116,25 @@ struct BulkRecordParser {
             objectType: objectType,
             fileID: fileID,
             errorCode: errorCode,
-            allocationSize: allocationSize
+            allocationSize: allocationSize,
+            cloneID: cloneID,
+            extendedFlags: extendedFlags
         )
     }
 
-    private static func validate(_ returned: ReturnedAttributes) throws {
+    private static func validate(
+        _ returned: ReturnedAttributes,
+        includeCloneMetadata: Bool
+    ) throws {
         guard returned.commonattr & UInt32(ATTR_CMN_RETURNED_ATTRS) != 0 else {
             throw ParseError(description: "bulk record omitted its returned-attribute mask")
         }
+        let allowedCloneAttributes = includeCloneMetadata ? cloneAttributes : 0
         guard returned.commonattr & ~commonAttributes == 0,
               returned.volattr == 0,
               returned.dirattr == 0,
               returned.fileattr & ~fileAttributes == 0,
-              returned.forkattr == 0 else {
+              returned.forkattr & ~allowedCloneAttributes == 0 else {
             throw ParseError(description: "bulk record returned unrequested attributes")
         }
     }

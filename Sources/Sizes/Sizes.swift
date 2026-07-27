@@ -12,11 +12,14 @@ struct SizesCommand: ParsableCommand {
     @Flag(name: [.short, .long], help: "Report each unreadable path.")
     var verbose = false
 
+    @Flag(help: "Count each group of exact APFS clones only once.")
+    var ignoreClones = false
+
     @Argument(help: "The directory to scan.", completion: .directory)
     var directory: String
 
     mutating func run() throws {
-        let scanner = DiskUsageScanner(verbose: verbose)
+        let scanner = DiskUsageScanner(verbose: verbose, ignoreClones: ignoreClones)
         do {
             let result = try scanner.scan(FilePath(directory))
             print("\(DiskUsageScanner.formatSize(blocks: result.totalBlocks))\t\(directory)")

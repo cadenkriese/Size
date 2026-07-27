@@ -4,11 +4,30 @@ import System
 struct DirectoryAccounting {
     var directBlocks: UInt64
     var regularFiles: [FileAllocation] = []
+    var cloneFiles: [CloneFileAllocation]?
+
+    init(directBlocks: UInt64, collectCloneMetadata: Bool) {
+        self.directBlocks = directBlocks
+        cloneFiles = collectCloneMetadata ? [] : nil
+    }
+
+    mutating func append(_ allocation: FileAllocation, cloneIdentity: CloneIdentity?) {
+        if cloneFiles != nil {
+            cloneFiles?.append(CloneFileAllocation(allocation: allocation, cloneIdentity: cloneIdentity))
+        } else {
+            regularFiles.append(allocation)
+        }
+    }
 }
 
 struct FileAllocation: Sendable {
     let identity: FileIdentity
     let blocks: UInt64
+}
+
+struct CloneFileAllocation: Sendable {
+    let allocation: FileAllocation
+    let cloneIdentity: CloneIdentity?
 }
 
 final class ShardedIdentitySet: Sendable {
@@ -35,8 +54,63 @@ final class ShardedIdentitySet: Sendable {
         return total
     }
 
+    func insertUnique(_ allocations: [CloneFileAllocation]) -> [CloneFileAllocation] {
+        guard !allocations.isEmpty else { return [] }
+        var grouped: [128 of [CloneFileAllocation]] = .init { _ in [] }
+        for allocation in allocations {
+            grouped[shardIndex(for: allocation.allocation.identity)].append(allocation)
+        }
+
+        var unique: [CloneFileAllocation] = []
+        unique.reserveCapacity(allocations.count)
+        for index in grouped.indices where !grouped[index].isEmpty {
+            shards[index].withLock { identities in
+                for allocation in grouped[index]
+                where identities.insert(allocation.allocation.identity).inserted {
+                    unique.append(allocation)
+                }
+            }
+        }
+        return unique
+    }
+
     private func shardIndex(for identity: FileIdentity) -> Int {
         let mixed = identity.device &* 0x9E37_79B9_7F4A_7C15 ^ identity.inode
+        return Int(mixed & UInt64(Self.shardCount - 1))
+    }
+}
+
+final class ShardedCloneIdentitySet: Sendable {
+    private static let shardCount = 128
+    private let shards: [128 of Mutex<Set<CloneIdentity>>] = .init { _ in Mutex(Set()) }
+
+    func insertAndSum(_ allocations: [CloneFileAllocation]) throws -> UInt64 {
+        guard !allocations.isEmpty else { return 0 }
+        var grouped: [128 of [CloneFileAllocation]] = .init { _ in [] }
+        var total: UInt64 = 0
+        for allocation in allocations {
+            if let identity = allocation.cloneIdentity {
+                grouped[shardIndex(for: identity)].append(allocation)
+            } else {
+                total = try DiskUsageScanner.checkedAdd(total, allocation.allocation.blocks)
+            }
+        }
+
+        for index in grouped.indices where !grouped[index].isEmpty {
+            let subtotal = try shards[index].withLock { identities in
+                try grouped[index].reduce(into: UInt64(0)) { sum, allocation in
+                    guard let identity = allocation.cloneIdentity,
+                          identities.insert(identity).inserted else { return }
+                    sum = try DiskUsageScanner.checkedAdd(sum, allocation.allocation.blocks)
+                }
+            }
+            total = try DiskUsageScanner.checkedAdd(total, subtotal)
+        }
+        return total
+    }
+
+    private func shardIndex(for identity: CloneIdentity) -> Int {
+        let mixed = identity.device &* 0x9E37_79B9_7F4A_7C15 ^ identity.cloneID
         return Int(mixed & UInt64(Self.shardCount - 1))
     }
 }

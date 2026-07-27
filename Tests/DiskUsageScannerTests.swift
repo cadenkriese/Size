@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+@testable import Sizes
 
 private final class TestBundleMarker: NSObject {}
 
@@ -10,6 +11,7 @@ struct DiskUsageScannerTests {
         #expect(result.status == 0)
         #expect(result.standardOutput.contains("USAGE: sizes"))
         #expect(result.standardOutput.contains("--verbose"))
+        #expect(result.standardOutput.contains("--ignore-clones"))
     }
 
     @Test func rejectsMissingDirectory() throws {
@@ -58,6 +60,82 @@ struct DiskUsageScannerTests {
             #expect(result.status == 0)
             #expect(firstField(of: result.standardOutput) == expectedSize)
             #expect(result.standardOutput.hasSuffix("\t\(root.path)\n"))
+            #expect(result.standardError.isEmpty)
+
+            let cloneAware = try invoke(["--ignore-clones", root.path])
+            #expect(cloneAware.status == 0)
+            #expect(firstField(of: cloneAware.standardOutput) == expectedSize)
+            #expect(cloneAware.standardError.isEmpty)
+        }
+    }
+
+    @Test func ignoresExactClonesAndPreservesHardLinks() throws {
+        try withTemporaryDirectory { root in
+            let fileManager = FileManager.default
+            let nested = root.appendingPathComponent("nested", isDirectory: true)
+            try fileManager.createDirectory(at: nested, withIntermediateDirectories: false)
+
+            let original = nested.appendingPathComponent("original")
+            try Data(repeating: 0xA5, count: 1_024 * 1_024).write(to: original)
+            let firstClone = root.appendingPathComponent("first-clone")
+            let secondClone = nested.appendingPathComponent("second-clone")
+            try cloneFile(at: original, to: firstClone)
+            try cloneFile(at: original, to: secondClone)
+            try fileManager.linkItem(
+                at: original,
+                to: root.appendingPathComponent("hard-link")
+            )
+
+            let originalBlocks = try allocatedBlocks(for: original)
+            #expect(try allocatedBlocks(for: firstClone) == originalBlocks)
+            #expect(try allocatedBlocks(for: secondClone) == originalBlocks)
+            let directoryBlocks = try allocatedBlocks(for: root)
+                + allocatedBlocks(for: nested)
+
+            let normal = try invoke([root.path])
+            let expectedNormalSize = try duSize(for: root)
+            let expectedNormalBlocks = directoryBlocks + 3 * originalBlocks
+            #expect(normal.status == 0)
+            #expect(firstField(of: normal.standardOutput) == expectedNormalSize)
+            #expect(
+                firstField(of: normal.standardOutput).map(String.init)
+                    == DiskUsageScanner.formatSize(blocks: expectedNormalBlocks)
+            )
+
+            let cloneAware = try invoke(["--ignore-clones", root.path])
+            let expectedBlocks = directoryBlocks + originalBlocks
+            #expect(cloneAware.status == 0)
+            #expect(
+                firstField(of: cloneAware.standardOutput).map(String.init)
+                    == DiskUsageScanner.formatSize(blocks: expectedBlocks)
+            )
+            #expect(cloneAware.standardError.isEmpty)
+        }
+    }
+
+    @Test func countsModifiedCloneSeparately() throws {
+        try withTemporaryDirectory { root in
+            let original = root.appendingPathComponent("original")
+            try Data(repeating: 0x5A, count: 1_024 * 1_024).write(to: original)
+            let exactClone = root.appendingPathComponent("exact-clone")
+            let modifiedClone = root.appendingPathComponent("modified-clone")
+            try cloneFile(at: original, to: exactClone)
+            try cloneFile(at: original, to: modifiedClone)
+
+            let handle = try FileHandle(forWritingTo: modifiedClone)
+            try handle.seek(toOffset: 64 * 1_024)
+            try handle.write(contentsOf: Data(repeating: 0xC3, count: 16 * 1_024))
+            try handle.close()
+
+            let expectedBlocks = try allocatedBlocks(for: root)
+                + allocatedBlocks(for: original)
+                + allocatedBlocks(for: modifiedClone)
+            let result = try invoke(["--ignore-clones", root.path])
+            #expect(result.status == 0)
+            #expect(
+                firstField(of: result.standardOutput).map(String.init)
+                    == DiskUsageScanner.formatSize(blocks: expectedBlocks)
+            )
             #expect(result.standardError.isEmpty)
         }
     }
@@ -125,6 +203,30 @@ struct DiskUsageScannerTests {
             Darwin.write(fileDescriptor, $0.baseAddress, $0.count)
         }
         #expect(written == contents.count)
+    }
+
+    private func cloneFile(at source: URL, to destination: URL) throws {
+        let status = source.withUnsafeFileSystemRepresentation { sourcePath in
+            destination.withUnsafeFileSystemRepresentation { destinationPath in
+                clonefile(sourcePath, destinationPath, 0)
+            }
+        }
+        let cloneError = errno
+        if status != 0, cloneError == ENOTSUP || cloneError == EXDEV {
+            try Test.cancel("The temporary filesystem does not support APFS clones")
+        }
+        try #require(status == 0, "clonefile failed with errno \(cloneError)")
+    }
+
+    private func allocatedBlocks(for url: URL) throws -> UInt64 {
+        var metadata = stat()
+        let status = url.withUnsafeFileSystemRepresentation {
+            lstat($0, &metadata)
+        }
+        let statError = errno
+        try #require(status == 0, "lstat failed with errno \(statError)")
+        try #require(metadata.st_blocks >= 0, "lstat returned a negative block count")
+        return UInt64(metadata.st_blocks)
     }
 
     private func invoke(_ arguments: [String]) throws -> Invocation {
