@@ -49,7 +49,7 @@ struct DiskUsageScanner: Sendable {
             workerCount: max(1, workers),
             verbose: verbose,
             ignoreClones: ignoreClones,
-            diagnosticHandler: diagnosticHandler
+            diagnosticHandler: diagnosticHandler,
         ).scan(root)
     }
 

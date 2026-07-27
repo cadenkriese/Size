@@ -179,7 +179,7 @@ final class ReusableBufferPool: Sendable {
     private let buffers: Mutex<[[UInt8]]>
 
     init(count: Int, size: Int) {
-        buffers = Mutex((0..<count).map { _ in [UInt8](repeating: 0, count: size) })
+        buffers = Mutex((0 ..< count).map { _ in [UInt8](repeating: 0, count: size) })
     }
 
     func withBuffer(_ body: (inout [UInt8]) -> Void) {

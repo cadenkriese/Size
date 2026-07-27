@@ -1,7 +1,7 @@
 import Darwin
 import System
 
-struct BulkRecordParser {
+enum BulkRecordParser {
     static let regularType: UInt32 = 1
     static let directoryType: UInt32 = 2
 
@@ -24,7 +24,7 @@ struct BulkRecordParser {
             volattr: 0,
             dirattr: 0,
             fileattr: fileAttributes,
-            forkattr: includeCloneMetadata ? cloneAttributes : 0
+            forkattr: includeCloneMetadata ? cloneAttributes : 0,
         )
     }
 
@@ -46,7 +46,7 @@ struct BulkRecordParser {
     static func parse(
         buffer: borrowing Span<UInt8>,
         recordCount: Int,
-        includeCloneMetadata: Bool = false
+        includeCloneMetadata: Bool = false,
     ) throws -> [Entry] {
         guard recordCount >= 0 else {
             throw ParseError(description: "negative bulk record count")
@@ -55,14 +55,14 @@ struct BulkRecordParser {
         var entries: [Entry] = []
         entries.reserveCapacity(recordCount)
         var offset = 0
-        for _ in 0..<recordCount {
+        for _ in 0 ..< recordCount {
             var reader = try RecordReader(buffer: buffer, start: offset)
-            entries.append(
-                try parseRecord(
+            try entries.append(
+                parseRecord(
                     from: &reader,
                     buffer: buffer,
-                    includeCloneMetadata: includeCloneMetadata
-                )
+                    includeCloneMetadata: includeCloneMetadata,
+                ),
             )
             offset = reader.end
         }
@@ -72,42 +72,42 @@ struct BulkRecordParser {
     private static func parseRecord(
         from reader: inout RecordReader,
         buffer: borrowing Span<UInt8>,
-        includeCloneMetadata: Bool
+        includeCloneMetadata: Bool,
     ) throws -> Entry {
         let returned = try reader.readReturnedAttributes(from: buffer)
         try validate(returned, includeCloneMetadata: includeCloneMetadata)
 
         let component = try reader.readComponent(
             from: buffer,
-            ifPresent: returned.commonattr & UInt32(ATTR_CMN_NAME) != 0
+            ifPresent: returned.commonattr & UInt32(ATTR_CMN_NAME) != 0,
         )
         let rawDevice: UInt32? = try reader.read(
             from: buffer,
-            ifPresent: returned.commonattr & UInt32(ATTR_CMN_DEVID) != 0
+            ifPresent: returned.commonattr & UInt32(ATTR_CMN_DEVID) != 0,
         )
         let objectType: UInt32? = try reader.read(
             from: buffer,
-            ifPresent: returned.commonattr & UInt32(ATTR_CMN_OBJTYPE) != 0
+            ifPresent: returned.commonattr & UInt32(ATTR_CMN_OBJTYPE) != 0,
         )
         let fileID: UInt64? = try reader.read(
             from: buffer,
-            ifPresent: returned.commonattr & UInt32(ATTR_CMN_FILEID) != 0
+            ifPresent: returned.commonattr & UInt32(ATTR_CMN_FILEID) != 0,
         )
         let errorCode: Int32? = try reader.read(
             from: buffer,
-            ifPresent: returned.commonattr & errorAttribute != 0
+            ifPresent: returned.commonattr & errorAttribute != 0,
         )
         let allocationSize: Int64? = try reader.read(
             from: buffer,
-            ifPresent: returned.fileattr & UInt32(ATTR_FILE_ALLOCSIZE) != 0
+            ifPresent: returned.fileattr & UInt32(ATTR_FILE_ALLOCSIZE) != 0,
         )
         let cloneID: UInt64? = try reader.read(
             from: buffer,
-            ifPresent: returned.forkattr & UInt32(ATTR_CMNEXT_CLONEID) != 0
+            ifPresent: returned.forkattr & UInt32(ATTR_CMNEXT_CLONEID) != 0,
         )
         let extendedFlags: UInt64? = try reader.read(
             from: buffer,
-            ifPresent: returned.forkattr & UInt32(ATTR_CMNEXT_EXT_FLAGS) != 0
+            ifPresent: returned.forkattr & UInt32(ATTR_CMNEXT_EXT_FLAGS) != 0,
         )
 
         return Entry(
@@ -118,13 +118,13 @@ struct BulkRecordParser {
             errorCode: errorCode,
             allocationSize: allocationSize,
             cloneID: cloneID,
-            extendedFlags: extendedFlags
+            extendedFlags: extendedFlags,
         )
     }
 
     private static func validate(
         _ returned: ReturnedAttributes,
-        includeCloneMetadata: Bool
+        includeCloneMetadata: Bool,
     ) throws {
         guard returned.commonattr & UInt32(ATTR_CMN_RETURNED_ATTRS) != 0 else {
             throw ParseError(description: "bulk record omitted its returned-attribute mask")
@@ -134,7 +134,8 @@ struct BulkRecordParser {
               returned.volattr == 0,
               returned.dirattr == 0,
               returned.fileattr & ~fileAttributes == 0,
-              returned.forkattr & ~allowedCloneAttributes == 0 else {
+              returned.forkattr & ~allowedCloneAttributes == 0
+        else {
             throw ParseError(description: "bulk record returned unrequested attributes")
         }
     }
@@ -167,7 +168,8 @@ private struct RecordReader {
         let length = buffer.bytes.load(fromByteOffset: start, as: UInt32.self)
         guard let recordLength = Int(exactly: length),
               recordLength >= headerSize,
-              recordLength <= buffer.count - start else {
+              recordLength <= buffer.count - start
+        else {
             throw BulkRecordParser.ParseError(description: "invalid bulk record length")
         }
 
@@ -177,7 +179,7 @@ private struct RecordReader {
     }
 
     mutating func read<T: ConvertibleFromBytes>(
-        from buffer: borrowing Span<UInt8>
+        from buffer: borrowing Span<UInt8>,
     ) throws -> T {
         let size = MemoryLayout<T>.size
         guard offset <= end, size <= end - offset else {
@@ -189,7 +191,7 @@ private struct RecordReader {
 
     mutating func read<T: ConvertibleFromBytes>(
         from buffer: borrowing Span<UInt8>,
-        ifPresent: Bool
+        ifPresent: Bool,
     ) throws -> T? {
         guard ifPresent else { return nil }
         let value: T = try read(from: buffer)
@@ -197,7 +199,7 @@ private struct RecordReader {
     }
 
     mutating func readReturnedAttributes(
-        from buffer: borrowing Span<UInt8>
+        from buffer: borrowing Span<UInt8>,
     ) throws -> ReturnedAttributes {
         let commonattr: UInt32 = try read(from: buffer)
         let volattr: UInt32 = try read(from: buffer)
@@ -209,13 +211,13 @@ private struct RecordReader {
             volattr: volattr,
             dirattr: dirattr,
             fileattr: fileattr,
-            forkattr: forkattr
+            forkattr: forkattr,
         )
     }
 
     mutating func readComponent(
         from buffer: borrowing Span<UInt8>,
-        ifPresent: Bool
+        ifPresent: Bool,
     ) throws -> FilePath.Component? {
         guard ifPresent else { return nil }
         let referenceOffset = offset
@@ -228,11 +230,12 @@ private struct RecordReader {
     private func component(
         from reference: AttributeReference,
         relativeTo referenceOffset: Int,
-        buffer: borrowing Span<UInt8>
+        buffer: borrowing Span<UInt8>,
     ) throws -> FilePath.Component {
         guard reference.dataOffset >= 0,
               let dataOffset = Int(exactly: reference.dataOffset),
-              let dataLength = Int(exactly: reference.length) else {
+              let dataLength = Int(exactly: reference.length)
+        else {
             throw BulkRecordParser.ParseError(description: "invalid name attribute reference")
         }
 
@@ -242,15 +245,16 @@ private struct RecordReader {
               dataLength > 0,
               nameStart >= start,
               nameEnd <= end,
-              buffer[nameEnd - 1] == 0 else {
+              buffer[nameEnd - 1] == 0
+        else {
             throw BulkRecordParser.ParseError(description: "out-of-bounds name attribute reference")
         }
 
-        for index in nameStart..<(nameEnd - 1) where buffer[index] == 0 {
+        for index in nameStart ..< (nameEnd - 1) where buffer[index] == 0 {
             throw BulkRecordParser.ParseError(description: "name attribute contains an embedded null byte")
         }
 
-        let platformName = buffer.extracting(nameStart..<nameEnd)
+        let platformName = buffer.extracting(nameStart ..< nameEnd)
         let component = platformName.withUnsafeBufferPointer { bytes in
             bytes.withMemoryRebound(to: CChar.self) { characters in
                 characters.baseAddress.flatMap {

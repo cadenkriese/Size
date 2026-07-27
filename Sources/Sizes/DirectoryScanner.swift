@@ -15,7 +15,7 @@ final class ScanContext: @unchecked Sendable {
         workerCount: Int,
         verbose: Bool,
         ignoreClones: Bool,
-        diagnosticHandler: @escaping @Sendable (String) -> Void
+        diagnosticHandler: @escaping @Sendable (String) -> Void,
     ) {
         queue = OperationQueue()
         queue.name = "sizes.directory-scanner"
@@ -48,13 +48,15 @@ extension ScanContext {
     private func scheduleDirectory(
         path: FilePath,
         descriptor: Int32? = nil,
-        isRoot: Bool = false
+        isRoot: Bool = false,
     ) {
         group.enter()
         queue.addOperation { [self] in
             defer { group.leave() }
             guard !accumulator.hasFatalError else {
-                if let descriptor { close(descriptor) }
+                if let descriptor {
+                    close(descriptor)
+                }
                 return
             }
             scanDirectory(path: path, descriptor: descriptor, isRoot: isRoot)
@@ -65,7 +67,7 @@ extension ScanContext {
         guard let descriptor = openDirectory(
             path: path,
             preopenedDescriptor: descriptor,
-            isRoot: isRoot
+            isRoot: isRoot,
         ) else { return }
         defer { close(descriptor) }
 
@@ -75,7 +77,7 @@ extension ScanContext {
 
         var accounting = DirectoryAccounting(
             directBlocks: blocks,
-            collectCloneMetadata: ignoreClones
+            collectCloneMetadata: ignoreClones,
         )
         buffers.withBuffer { buffer in
             readDirectory(
@@ -83,7 +85,7 @@ extension ScanContext {
                 path: path,
                 isRoot: isRoot,
                 buffer: &buffer,
-                accounting: &accounting
+                accounting: &accounting,
             )
         }
         commit(accounting)
@@ -92,9 +94,11 @@ extension ScanContext {
     private func openDirectory(
         path: FilePath,
         preopenedDescriptor: Int32?,
-        isRoot: Bool
+        isRoot: Bool,
     ) -> Int32? {
-        if let preopenedDescriptor { return preopenedDescriptor }
+        if let preopenedDescriptor {
+            return preopenedDescriptor
+        }
         let descriptor = path.withPlatformString {
             open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         }
@@ -125,7 +129,7 @@ private extension ScanContext {
         path: FilePath,
         isRoot: Bool,
         buffer: inout [UInt8],
-        accounting: inout DirectoryAccounting
+        accounting: inout DirectoryAccounting,
     ) {
         var attributeList = BulkRecordParser.attributeList(includeCloneMetadata: ignoreClones)
         let options = ignoreClones ? UInt64(FSOPT_ATTR_CMN_EXTENDED) : 0
@@ -136,10 +140,12 @@ private extension ScanContext {
                     &attributeList,
                     rawBuffer.baseAddress,
                     rawBuffer.count,
-                    options
+                    options,
                 )
             }
-            if count == 0 { return }
+            if count == 0 {
+                return
+            }
             guard count > 0 else {
                 recordFailure(path: path, code: errno, isRoot: isRoot)
                 return
@@ -149,7 +155,7 @@ private extension ScanContext {
                 let entries = try BulkRecordParser.parse(
                     buffer: buffer.span,
                     recordCount: Int(count),
-                    includeCloneMetadata: ignoreClones
+                    includeCloneMetadata: ignoreClones,
                 )
                 for entry in entries {
                     guard process(
@@ -157,7 +163,7 @@ private extension ScanContext {
                         descriptor: descriptor,
                         parentPath: path,
                         isRoot: isRoot,
-                        accounting: &accounting
+                        accounting: &accounting,
                     ) else { return }
                 }
             } catch {
@@ -174,7 +180,7 @@ private extension ScanContext {
         descriptor: Int32,
         parentPath: FilePath,
         isRoot: Bool,
-        accounting: inout DirectoryAccounting
+        accounting: inout DirectoryAccounting,
     ) -> Bool {
         guard let component = entry.component else {
             recordMalformed(path: parentPath, reason: "directory entry has no name", isRoot: isRoot)
@@ -198,7 +204,7 @@ private extension ScanContext {
            let allocation = bulkAllocation(for: entry) {
             accounting.append(
                 allocation,
-                cloneIdentity: exactCloneIdentity(for: entry, device: allocation.identity.device)
+                cloneIdentity: exactCloneIdentity(for: entry, device: allocation.identity.device),
             )
             return true
         }
@@ -208,7 +214,7 @@ private extension ScanContext {
             descriptor: descriptor,
             component: component,
             parentPath: parentPath,
-            accounting: &accounting
+            accounting: &accounting,
         )
         return !accumulator.hasFatalError
     }
@@ -220,9 +226,9 @@ private extension ScanContext {
               let inode = entry.fileID,
               let allocationSize = entry.allocationSize else { return nil }
         do {
-            return FileAllocation(
+            return try FileAllocation(
                 identity: FileIdentity(device: device, inode: inode),
-                blocks: try DiskUsageScanner.blocksForAllocatedBytes(allocationSize)
+                blocks: DiskUsageScanner.blocksForAllocatedBytes(allocationSize),
             )
         } catch {
             accumulator.recordFatal(.arithmeticOverflow)
@@ -232,7 +238,7 @@ private extension ScanContext {
 
     func exactCloneIdentity(
         for entry: BulkRecordParser.Entry,
-        device: UInt64
+        device: UInt64,
     ) -> CloneIdentity? {
         guard ignoreClones,
               let cloneID = entry.cloneID,
@@ -246,7 +252,7 @@ private extension ScanContext {
         descriptor: Int32,
         component: FilePath.Component,
         parentPath: FilePath,
-        accounting: inout DirectoryAccounting
+        accounting: inout DirectoryAccounting,
     ) {
         var metadata = stat()
         let status = component.withPlatformString {
@@ -270,11 +276,11 @@ private extension ScanContext {
                 FileAllocation(
                     identity: FileIdentity(
                         device: UInt64(UInt32(bitPattern: metadata.st_dev)),
-                        inode: UInt64(metadata.st_ino)
+                        inode: UInt64(metadata.st_ino),
                     ),
-                    blocks: blocks
+                    blocks: blocks,
                 ),
-                cloneIdentity: nil
+                cloneIdentity: nil,
             )
         } else {
             do {
@@ -288,17 +294,16 @@ private extension ScanContext {
     func commit(_ accounting: DirectoryAccounting) {
         guard !accumulator.hasFatalError else { return }
         do {
-            let fileBlocks: UInt64
-            if let cloneFiles = accounting.cloneFiles,
-               let cloneIdentities {
-                fileBlocks = try cloneIdentities.insertAndSum(
-                    identities.insertUnique(cloneFiles)
+            let fileBlocks: UInt64 = if let cloneFiles = accounting.cloneFiles,
+                                        let cloneIdentities {
+                try cloneIdentities.insertAndSum(
+                    identities.insertUnique(cloneFiles),
                 )
             } else {
-                fileBlocks = try identities.insertAndSum(accounting.regularFiles)
+                try identities.insertAndSum(accounting.regularFiles)
             }
-            accumulator.add(
-                blocks: try DiskUsageScanner.checkedAdd(accounting.directBlocks, fileBlocks)
+            try accumulator.add(
+                blocks: DiskUsageScanner.checkedAdd(accounting.directBlocks, fileBlocks),
             )
         } catch {
             accumulator.recordFatal(.arithmeticOverflow)

@@ -6,7 +6,7 @@ import System
 struct SizesCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sizes",
-        abstract: "Report the allocated disk usage of a directory."
+        abstract: "Report the allocated disk usage of a directory.",
     )
 
     @Flag(name: [.short, .long], help: "Report each unreadable path.")
