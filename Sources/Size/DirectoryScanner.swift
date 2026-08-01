@@ -20,7 +20,7 @@ final class ScanContext: @unchecked Sendable {
         diagnosticHandler: @escaping @Sendable (String) -> Void,
     ) {
         queue = OperationQueue()
-        queue.name = "sizes.directory-scanner"
+        queue.name = "size.directory-scanner"
         queue.maxConcurrentOperationCount = workerCount
         queue.qualityOfService = .userInitiated
         accumulator = ScanAccumulator(verbose: verbose, diagnosticHandler: diagnosticHandler)

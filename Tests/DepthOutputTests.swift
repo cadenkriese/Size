@@ -143,7 +143,7 @@ struct DepthOutputTests {
     private func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
-            .appendingPathComponent("sizes-depth-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("size-depth-tests-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? fileManager.removeItem(at: root) }
         try body(root)

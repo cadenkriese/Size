@@ -41,7 +41,7 @@ struct DiskUsageScannerTests {
 
     @Test func rejectsInvalidRoot() throws {
         let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("sizes-missing-\(UUID().uuidString)")
+            .appendingPathComponent("size-missing-\(UUID().uuidString)")
         let result = try invoke([missing.path])
         #expect(result.status != 0)
         #expect(result.standardOutput.isEmpty)
@@ -291,7 +291,7 @@ struct DiskUsageScannerTests {
     private func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
-            .appendingPathComponent("sizes-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("size-tests-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? fileManager.removeItem(at: root) }
         try body(root)

@@ -3,7 +3,7 @@ import Foundation
 import System
 
 @main
-struct SizesCommand: ParsableCommand {
+struct SizeCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sz",
         abstract: "Report the allocated disk usage of a directory.",

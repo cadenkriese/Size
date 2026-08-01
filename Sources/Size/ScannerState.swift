@@ -197,7 +197,7 @@ final class ScanAccumulator: Sendable {
         state.withLock { $0.unreadableCount += 1 }
         guard verbose else { return }
         diagnosticLock.withLock { _ in
-            diagnosticHandler("sizes: \(path.lossyString): \(message)\n")
+            diagnosticHandler("sz: \(path.lossyString): \(message)\n")
         }
     }
 }
