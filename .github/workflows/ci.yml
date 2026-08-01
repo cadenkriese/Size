@@ -22,7 +22,7 @@ jobs:
         run: swift build --configuration release
 
       - name: Upload
-	uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7
         with:
           name: Release Build
           archive: false
