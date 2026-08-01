@@ -6,10 +6,10 @@ import System
 struct SizeCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sz",
-        abstract: "Report the allocated disk usage of a directory.",
+        abstract: "Report the disk usage of a directory.",
     )
 
-    @Flag(name: [.short, .long], help: "Report each unreadable path.")
+    @Flag(name: [.short, .long], help: "Prints each unreadable path and its error.")
     var verbose = false
 
     @Flag(help: "Exclude APFS clones that don't take up any space yet.")
@@ -22,11 +22,11 @@ struct SizeCommand: ParsableCommand {
     )
     var depth: Int?
 
-    @Flag(help: "Print one du-style record per line.")
+    @Flag(help: "Omit tree hierarchy symbols.")
     var plain = false
 
-    @Argument(help: "The directory to scan.", completion: .directory)
-    var directory: String
+    @Argument(help: "The directory to scan. Defaults to the current directory.", completion: .directory)
+    var directory: String = "."
 
     mutating func validate() throws {
         if let depth, depth < 0 {
