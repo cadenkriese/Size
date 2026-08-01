@@ -1,0 +1,30 @@
+name: Push workflows
+on: [push]
+permissions:
+  contents: read
+
+jobs:
+  test-lint-and-build:
+    name: Test, lint and build
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Lint
+        run: swiftlint Sources Tests
+
+      - name: Test
+        run: swift test
+
+      - name: Build
+        run: swift build --configuration release
+
+      - name: Upload
+	uses: actions/upload-artifact@v7
+        with:
+          name: Release Build
+          archive: false
+          path: |
+            .build/release/sz
