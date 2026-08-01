@@ -13,17 +13,21 @@ enum BulkRecordParser {
         | UInt32(ATTR_CMN_FILEID)
         | errorAttribute
     private static let fileAttributes = UInt32(ATTR_FILE_ALLOCSIZE)
+    private static let linkCountAttribute = UInt32(ATTR_FILE_LINKCOUNT)
     private static let cloneAttributes = UInt32(ATTR_CMNEXT_CLONEID)
         | UInt32(ATTR_CMNEXT_EXT_FLAGS)
 
-    static func attributeList(includeCloneMetadata: Bool) -> attrlist {
+    static func attributeList(
+        includeCloneMetadata: Bool,
+        includeLinkCount: Bool = false,
+    ) -> attrlist {
         attrlist(
             bitmapcount: UInt16(ATTR_BIT_MAP_COUNT),
             reserved: 0,
             commonattr: commonAttributes,
             volattr: 0,
             dirattr: 0,
-            fileattr: fileAttributes,
+            fileattr: fileAttributes | (includeLinkCount ? linkCountAttribute : 0),
             forkattr: includeCloneMetadata ? cloneAttributes : 0,
         )
     }
@@ -34,6 +38,7 @@ enum BulkRecordParser {
         let objectType: UInt32?
         let fileID: UInt64?
         let errorCode: Int32?
+        let linkCount: UInt32?
         let allocationSize: Int64?
         let cloneID: UInt64?
         let extendedFlags: UInt64?
@@ -47,6 +52,7 @@ enum BulkRecordParser {
         buffer: borrowing Span<UInt8>,
         recordCount: Int,
         includeCloneMetadata: Bool = false,
+        includeLinkCount: Bool = false,
     ) throws -> [Entry] {
         guard recordCount >= 0 else {
             throw ParseError(description: "negative bulk record count")
@@ -62,6 +68,7 @@ enum BulkRecordParser {
                     from: &reader,
                     buffer: buffer,
                     includeCloneMetadata: includeCloneMetadata,
+                    includeLinkCount: includeLinkCount,
                 ),
             )
             offset = reader.end
@@ -73,9 +80,14 @@ enum BulkRecordParser {
         from reader: inout RecordReader,
         buffer: borrowing Span<UInt8>,
         includeCloneMetadata: Bool,
+        includeLinkCount: Bool,
     ) throws -> Entry {
         let returned = try reader.readReturnedAttributes(from: buffer)
-        try validate(returned, includeCloneMetadata: includeCloneMetadata)
+        try validate(
+            returned,
+            includeCloneMetadata: includeCloneMetadata,
+            includeLinkCount: includeLinkCount,
+        )
 
         let component = try reader.readComponent(
             from: buffer,
@@ -97,9 +109,10 @@ enum BulkRecordParser {
             from: buffer,
             ifPresent: returned.commonattr & errorAttribute != 0,
         )
-        let allocationSize: Int64? = try reader.read(
-            from: buffer,
-            ifPresent: returned.fileattr & UInt32(ATTR_FILE_ALLOCSIZE) != 0,
+        let (linkCount, allocationSize) = try parseFileAttributes(
+            from: &reader,
+            buffer: buffer,
+            returned: returned,
         )
         let cloneID: UInt64? = try reader.read(
             from: buffer,
@@ -116,24 +129,43 @@ enum BulkRecordParser {
             objectType: objectType,
             fileID: fileID,
             errorCode: errorCode,
+            linkCount: linkCount,
             allocationSize: allocationSize,
             cloneID: cloneID,
             extendedFlags: extendedFlags,
         )
     }
 
+    private static func parseFileAttributes(
+        from reader: inout RecordReader,
+        buffer: borrowing Span<UInt8>,
+        returned: ReturnedAttributes,
+    ) throws -> (linkCount: UInt32?, allocationSize: Int64?) {
+        let linkCount: UInt32? = try reader.read(
+            from: buffer,
+            ifPresent: returned.fileattr & linkCountAttribute != 0,
+        )
+        let allocationSize: Int64? = try reader.read(
+            from: buffer,
+            ifPresent: returned.fileattr & UInt32(ATTR_FILE_ALLOCSIZE) != 0,
+        )
+        return (linkCount, allocationSize)
+    }
+
     private static func validate(
         _ returned: ReturnedAttributes,
         includeCloneMetadata: Bool,
+        includeLinkCount: Bool,
     ) throws {
         guard returned.commonattr & UInt32(ATTR_CMN_RETURNED_ATTRS) != 0 else {
             throw ParseError(description: "bulk record omitted its returned-attribute mask")
         }
         let allowedCloneAttributes = includeCloneMetadata ? cloneAttributes : 0
+        let allowedFileAttributes = fileAttributes | (includeLinkCount ? linkCountAttribute : 0)
         guard returned.commonattr & ~commonAttributes == 0,
               returned.volattr == 0,
               returned.dirattr == 0,
-              returned.fileattr & ~fileAttributes == 0,
+              returned.fileattr & ~allowedFileAttributes == 0,
               returned.forkattr & ~allowedCloneAttributes == 0
         else {
             throw ParseError(description: "bulk record returned unrequested attributes")

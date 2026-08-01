@@ -1,5 +1,5 @@
 import Testing
-@testable import Sizes
+@testable import Size
 
 struct ScannerStateTests {
     @Test func deduplicatesHardLinksBeforeDeviceScopedClones() throws {

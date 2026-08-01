@@ -1,9 +1,17 @@
 import Foundation
 import System
 
+struct DirectoryUsage: Equatable, Sendable {
+    let path: FilePath
+    let parentPath: FilePath?
+    let depth: Int
+    let totalBlocks: UInt64
+}
+
 struct ScanResult: Equatable, Sendable {
     let totalBlocks: UInt64
     let unreadableEntryCount: Int
+    let directoryUsages: [DirectoryUsage]
 }
 
 struct FileIdentity: Hashable, Sendable {
@@ -39,6 +47,7 @@ struct DiskUsageScanner: Sendable {
 
     var verbose = false
     var ignoreClones = false
+    var maximumReportDepth: Int?
     var diagnosticHandler: @Sendable (String) -> Void = { message in
         FileHandle.standardError.write(Data(message.utf8))
     }
@@ -49,6 +58,7 @@ struct DiskUsageScanner: Sendable {
             workerCount: max(1, workers),
             verbose: verbose,
             ignoreClones: ignoreClones,
+            maximumReportDepth: maximumReportDepth,
             diagnosticHandler: diagnosticHandler,
         ).scan(root)
     }

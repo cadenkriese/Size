@@ -1,17 +1,29 @@
 import Darwin
 import Foundation
 import Testing
-@testable import Sizes
+@testable import Size
 
 private final class TestBundleMarker: NSObject {}
+
+private struct Invocation {
+    let status: Int32
+    let standardOutput: String
+    let standardError: String
+}
+
+private func firstField(of text: String) -> Substring? {
+    text.split(whereSeparator: \Character.isWhitespace).first
+}
 
 struct DiskUsageScannerTests {
     @Test func showsGeneratedHelp() throws {
         let result = try invoke(["--help"])
         #expect(result.status == 0)
-        #expect(result.standardOutput.contains("USAGE: sizes"))
+        #expect(result.standardOutput.contains("USAGE: sz"))
         #expect(result.standardOutput.contains("--verbose"))
         #expect(result.standardOutput.contains("--ignore-clones"))
+        #expect(result.standardOutput.contains("-d, --depth"))
+        #expect(result.standardOutput.contains("--plain"))
     }
 
     @Test func rejectsMissingDirectory() throws {
@@ -20,13 +32,20 @@ struct DiskUsageScannerTests {
         #expect(result.standardError.contains("Missing expected argument"))
     }
 
+    @Test func rejectsInvalidDepth() throws {
+        let result = try invoke(["--depth", "-1", "."])
+        #expect(result.status != 0)
+        #expect(result.standardOutput.isEmpty)
+        #expect(result.standardError.contains("must be nonnegative"))
+    }
+
     @Test func rejectsInvalidRoot() throws {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("sizes-missing-\(UUID().uuidString)")
         let result = try invoke([missing.path])
         #expect(result.status != 0)
         #expect(result.standardOutput.isEmpty)
-        #expect(result.standardError.contains("sizes:"))
+        #expect(result.standardError.contains("sz:"))
     }
 
     @Test func rejectsRegularFileRoot() throws {
@@ -176,12 +195,6 @@ struct DiskUsageScannerTests {
         }
     }
 
-    private struct Invocation {
-        let status: Int32
-        let standardOutput: String
-        let standardError: String
-    }
-
     private func createAllocatedFileWithInvalidUTF8Name(in directory: URL) throws {
         var path = directory.path.utf8.map(CChar.init(bitPattern:))
         path.append(47)
@@ -254,7 +267,7 @@ struct DiskUsageScannerTests {
 
     private func executableURL() throws -> URL {
         let products = Bundle(for: TestBundleMarker.self).bundleURL.deletingLastPathComponent()
-        let executable = products.appendingPathComponent("sizes")
+        let executable = products.appendingPathComponent("sz")
         #expect(FileManager.default.isExecutableFile(atPath: executable.path))
         return executable
     }
@@ -273,10 +286,6 @@ struct DiskUsageScannerTests {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         let text = try #require(String(data: data, encoding: .utf8))
         return try #require(firstField(of: text))
-    }
-
-    private func firstField(of text: String) -> Substring? {
-        text.split(whereSeparator: \Character.isWhitespace).first
     }
 
     private func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {

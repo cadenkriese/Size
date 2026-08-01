@@ -1,7 +1,7 @@
 import Darwin
 import System
 import Testing
-@testable import Sizes
+@testable import Size
 
 struct BulkRecordParserTests {
     @Test func parsesConsecutiveUnalignedRecords() throws {
@@ -26,6 +26,17 @@ struct BulkRecordParserTests {
             platformString: [CChar(bitPattern: 0xFF), 0]
         )
         #expect(entries.first?.component == expected)
+    }
+
+    @Test func parsesOptionalLinkCount() throws {
+        let record = RecordFixture.record(name: [65, 0], linkCount: 3)
+        let entry = try #require(parse(record, includeLinkCount: true).first)
+        #expect(entry.linkCount == 3)
+
+        expectParseError(
+            "bulk record returned unrequested attributes",
+            parsing: record
+        )
     }
 
     @Test func parsesOptionalCloneMetadata() throws {
@@ -122,12 +133,14 @@ struct BulkRecordParserTests {
     private func parse(
         _ bytes: [UInt8],
         recordCount: Int = 1,
-        includeCloneMetadata: Bool = false
+        includeCloneMetadata: Bool = false,
+        includeLinkCount: Bool = false
     ) throws -> [BulkRecordParser.Entry] {
         try BulkRecordParser.parse(
             buffer: bytes.span,
             recordCount: recordCount,
-            includeCloneMetadata: includeCloneMetadata
+            includeCloneMetadata: includeCloneMetadata,
+            includeLinkCount: includeLinkCount
         )
     }
 
@@ -135,13 +148,15 @@ struct BulkRecordParserTests {
         _ description: String,
         parsing bytes: [UInt8],
         recordCount: Int = 1,
-        includeCloneMetadata: Bool = false
+        includeCloneMetadata: Bool = false,
+        includeLinkCount: Bool = false
     ) {
         do {
             _ = try parse(
                 bytes,
                 recordCount: recordCount,
-                includeCloneMetadata: includeCloneMetadata
+                includeCloneMetadata: includeCloneMetadata,
+                includeLinkCount: includeLinkCount
             )
             Issue.record("Expected parsing to fail with: \(description)")
         } catch let error as BulkRecordParser.ParseError {
@@ -158,6 +173,7 @@ private enum RecordFixture {
     static func record(
         name: [UInt8],
         device: UInt32 = 17,
+        linkCount: UInt32? = nil,
         cloneID: UInt64? = nil,
         extendedFlags: UInt64? = nil
     ) -> [UInt8] {
@@ -166,6 +182,8 @@ private enum RecordFixture {
             | UInt32(ATTR_CMN_DEVID)
             | UInt32(ATTR_CMN_OBJTYPE)
             | UInt32(ATTR_CMN_FILEID)
+        var fileAttributes = UInt32(ATTR_FILE_ALLOCSIZE)
+        if linkCount != nil { fileAttributes |= UInt32(ATTR_FILE_LINKCOUNT) }
         var cloneAttributes: UInt32 = 0
         if cloneID != nil { cloneAttributes |= UInt32(ATTR_CMNEXT_CLONEID) }
         if extendedFlags != nil { cloneAttributes |= UInt32(ATTR_CMNEXT_EXT_FLAGS) }
@@ -175,7 +193,7 @@ private enum RecordFixture {
         append(commonAttributes, to: &bytes)
         append(UInt32(0), to: &bytes)
         append(UInt32(0), to: &bytes)
-        append(UInt32(ATTR_FILE_ALLOCSIZE), to: &bytes)
+        append(fileAttributes, to: &bytes)
         append(cloneAttributes, to: &bytes)
 
         let referenceOffset = bytes.count
@@ -184,6 +202,7 @@ private enum RecordFixture {
         append(device, to: &bytes)
         append(BulkRecordParser.regularType, to: &bytes)
         append(UInt64(29), to: &bytes)
+        if let linkCount { append(linkCount, to: &bytes) }
         append(Int64(4_096), to: &bytes)
         if let cloneID { append(cloneID, to: &bytes) }
         if let extendedFlags { append(extendedFlags, to: &bytes) }

@@ -1,7 +1,7 @@
 import Synchronization
 import System
 
-struct DirectoryAccounting {
+struct DirectoryAccounting: Sendable {
     var directBlocks: UInt64
     var regularFiles: [FileAllocation] = []
     var cloneFiles: [CloneFileAllocation]?
@@ -18,6 +18,13 @@ struct DirectoryAccounting {
             regularFiles.append(allocation)
         }
     }
+}
+
+struct ScannedDirectory: Sendable {
+    let path: FilePath
+    let parentPath: FilePath?
+    let depth: Int
+    let accounting: DirectoryAccounting
 }
 
 struct FileAllocation: Sendable {
@@ -120,6 +127,7 @@ final class ScanAccumulator: Sendable {
         var totalBlocks: UInt64 = 0
         var unreadableCount = 0
         var fatalError: ScanError?
+        var directories: [ScannedDirectory] = []
     }
 
     private let state = Mutex(State())
@@ -142,8 +150,20 @@ final class ScanAccumulator: Sendable {
 
     var result: ScanResult {
         state.withLock {
-            ScanResult(totalBlocks: $0.totalBlocks, unreadableEntryCount: $0.unreadableCount)
+            ScanResult(
+                totalBlocks: $0.totalBlocks,
+                unreadableEntryCount: $0.unreadableCount,
+                directoryUsages: [],
+            )
         }
+    }
+
+    var unreadableEntryCount: Int {
+        state.withLock { $0.unreadableCount }
+    }
+
+    var directories: [ScannedDirectory] {
+        state.withLock { $0.directories }
     }
 
     func add(blocks: UInt64) {
@@ -155,6 +175,13 @@ final class ScanAccumulator: Sendable {
             } else {
                 state.totalBlocks = total
             }
+        }
+    }
+
+    func recordDirectory(_ directory: ScannedDirectory) {
+        state.withLock { state in
+            guard state.fatalError == nil else { return }
+            state.directories.append(directory)
         }
     }
 
