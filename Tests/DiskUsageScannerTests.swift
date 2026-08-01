@@ -26,10 +26,10 @@ struct DiskUsageScannerTests {
         #expect(result.standardOutput.contains("--plain"))
     }
 
-    @Test func rejectsMissingDirectory() throws {
+    @Test func defaultsToCurrentDirectory() throws {
         let result = try invoke([])
-        #expect(result.status != 0)
-        #expect(result.standardError.contains("Missing expected argument"))
+        #expect(result.status == 0)
+        #expect(result.standardOutput.hasSuffix("\t.\n"))
     }
 
     @Test func rejectsInvalidDepth() throws {
