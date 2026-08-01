@@ -16,7 +16,7 @@ struct SizesCommand: ParsableCommand {
     var ignoreClones = false
 
     @Argument(help: "The directory to scan.", completion: .directory)
-    var directory: String
+    var directory: String = "."
 
     mutating func run() throws {
         let scanner = DiskUsageScanner(verbose: verbose, ignoreClones: ignoreClones)
