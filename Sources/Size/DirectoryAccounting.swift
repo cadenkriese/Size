@@ -9,14 +9,7 @@ extension ScanContext {
         accounting: inout DirectoryAccounting,
     ) {
         if maximumReportDepth != nil, linkCount == 1, cloneIdentity == nil {
-            do {
-                accounting.directBlocks = try DiskUsageScanner.checkedAdd(
-                    accounting.directBlocks,
-                    allocation.blocks,
-                )
-            } catch {
-                accumulator.recordFatal(.arithmeticOverflow)
-            }
+            addDirectBlocks(allocation.blocks, to: &accounting)
             return
         }
         accounting.append(allocation, cloneIdentity: cloneIdentity)

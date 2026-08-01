@@ -18,20 +18,15 @@ func platformStringLessThan(_ lhs: FilePath, _ rhs: FilePath) -> Bool {
     }
 }
 
+private func decodeLossyString(_ pointer: UnsafePointer<CChar>) -> String {
+    let bytes = UnsafeRawPointer(pointer).assumingMemoryBound(to: UInt8.self)
+    return String(decodingCString: bytes, as: UTF8.self)
+}
+
 extension FilePath {
-    var lossyString: String {
-        withPlatformString { pointer in
-            let bytes = UnsafeRawPointer(pointer).assumingMemoryBound(to: UInt8.self)
-            return String(decodingCString: bytes, as: UTF8.self)
-        }
-    }
+    var lossyString: String { withPlatformString(decodeLossyString) }
 }
 
 extension FilePath.Component {
-    var lossyString: String {
-        withPlatformString { pointer in
-            let bytes = UnsafeRawPointer(pointer).assumingMemoryBound(to: UInt8.self)
-            return String(decodingCString: bytes, as: UTF8.self)
-        }
-    }
+    var lossyString: String { withPlatformString(decodeLossyString) }
 }

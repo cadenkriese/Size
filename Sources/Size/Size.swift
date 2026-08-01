@@ -124,17 +124,14 @@ private enum UsageRenderer {
                 continue
             }
 
-            let childIndex = stack[level].nextIndex
-            let child = stack[level].children[childIndex]
+            let child = stack[level].children[stack[level].nextIndex]
             stack[level].nextIndex += 1
             let isLast = stack[level].nextIndex == stack[level].children.count
 
             var prefix = ""
-            if level > 0 {
-                for ancestorLevel in 0 ..< level {
-                    let ancestor = stack[ancestorLevel]
-                    prefix += ancestor.nextIndex == ancestor.children.count ? "    " : "│   "
-                }
+            for ancestorLevel in 0 ..< level {
+                let ancestor = stack[ancestorLevel]
+                prefix += ancestor.nextIndex == ancestor.children.count ? "    " : "│   "
             }
             prefix += isLast ? "└── " : "├── "
             let name = child.path.lastComponent?.lossyString ?? child.path.lossyString
