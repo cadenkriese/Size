@@ -30,7 +30,7 @@ And here is a test on my home directory:
     <picture>
       <source
         media="(prefers-color-scheme: dark)"
-        srcset="https://github.com/user-attachments/assets/1e956aa5-153d-469f-90c8-4cebc6d058d3">
+        srcset="https://github.com/user-attachments/assets/57c5f8eb-79ce-4ce6-813c-c34cd6f9612b">
       <source
         media="(prefers-color-scheme: light)"
         srcset="https://github.com/user-attachments/assets/d1ed46f2-b5d2-46f2-98ad-3df3c7a03cea">
