@@ -18,11 +18,11 @@ jobs:
       - name: Lint
         run: swiftlint Sources Tests
 
-      - name: Test
-        run: swift test
-
       - name: Build
         run: swift build --configuration release
+
+      - name: Test
+        run: swift test
 
       - name: Upload
         uses: actions/upload-artifact@v7
