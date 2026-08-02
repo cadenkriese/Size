@@ -6,7 +6,7 @@ permissions:
 jobs:
   test-lint-and-build:
     name: Test, lint and build
-    runs-on: macos-latest
+    runs-on: xcode-27
 
     steps:
       - name: Check out repository
