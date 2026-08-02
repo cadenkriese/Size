@@ -25,7 +25,7 @@ Here are the contrived scenario benchmarks (diskus crashed on the deep scenario)
     </picture>
 </p>
 
-And here is a test on my home directory:
+And here is a test on my home directory (now in seconds):
 <p align="center">
     <picture>
       <source
