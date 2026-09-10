@@ -2,7 +2,7 @@
 Size (`sz`) displays disk usage, like `du -sh`, using the macOS syscall `getattrlistbulk`, which I discovered thanks to Andrew Healey's blog post, *[Maybe the Fastest Disk Usagae Program on macOS](https://healeycodes.com/maybe-the-fastest-disk-usage-program-on-macos)*.
 Size is written in Swift, has performance on par with Healey's `dumac` and has more safety and consistency gauruntees.
 ## Speed
-Size follows the same approach as dumac, so it's performance is very similar. In some cases, Size may be a few milliseconds slower than dumac because it spends time validating filesystem records and preventing stack overflow. diskus and du do not use `getattrlistbulk` so they are consistently slower with one exception: very deep file trees. At that point, dumac and Size lose to du because we spend extra time handling concurrency, whereas du handles it serially. 
+Size follows the same approach as dumac, so its performance is very similar. In some cases, Size may be a few milliseconds slower than dumac because it spends time validating filesystem records and preventing stack overflow. diskus and du do not use `getattrlistbulk` so they are consistently slower with one exception: very deep file trees. At that point, dumac and Size lose to du because we spend extra time handling concurrency, whereas du handles it serially.
 
 ### Contrived Benchmarks
 diskus crashed on the deep scenario.
